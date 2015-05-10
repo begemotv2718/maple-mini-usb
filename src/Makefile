@@ -19,7 +19,7 @@
 ## along with this library.  If not, see <http://www.gnu.org/licenses/>.
 ##
 
-BINARY = test
+BINARY = usbhid
 
 LDSCRIPT = stm32-maple.ld
 
