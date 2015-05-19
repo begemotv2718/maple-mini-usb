@@ -18,6 +18,7 @@
  */
 
 #include <stdlib.h>
+#include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/cm3/systick.h>
@@ -75,17 +76,6 @@ static const uint8_t hid_report_descriptor[] = {
 	0x95, 0x03, /*     REPORT_COUNT (3)                 */
 	0x81, 0x06, /*     INPUT (Data,Var,Rel)             */
 	0xc0,       /*   END_COLLECTION                     */
-	0x09, 0x3c, /*   USAGE (Motion Wakeup)              */
-	0x05, 0xff, /*   USAGE_PAGE (Vendor Defined Page 1) */
-	0x09, 0x01, /*   USAGE (Vendor Usage 1)             */
-	0x15, 0x00, /*   LOGICAL_MINIMUM (0)                */
-	0x25, 0x01, /*   LOGICAL_MAXIMUM (1)                */
-	0x75, 0x01, /*   REPORT_SIZE (1)                    */
-	0x95, 0x02, /*   REPORT_COUNT (2)                   */
-	0xb1, 0x22, /*   FEATURE (Data,Var,Abs,NPrf)        */
-	0x75, 0x06, /*   REPORT_SIZE (6)                    */
-	0x95, 0x01, /*   REPORT_COUNT (1)                   */
-	0xb1, 0x01, /*   FEATURE (Cnst,Ary,Abs)             */
 	0xc0        /* END_COLLECTION                       */
 };
 
@@ -161,12 +151,62 @@ static const char *usb_strings[] = {
 
 /* Buffer to be used for control requests. */
 uint8_t usbd_control_buffer[128];
+#define USB_HID_GET_REPORT   0x01
+#define USB_HID_GET_IDLE     0x02
+#define USB_HID_GET_PROTOCOL 0x03
+#define USB_HID_SET_REPORT   0x09
+#define USB_HID_SET_IDLE     0x0A
+#define USB_HID_SET_PROTOCOL 0x0B
+#define USB_HID_REPORT_INPUT 0x01
+#define USB_HID_REPORT_OUTPUT 0x02 
+
+struct mouse_buffer_s {
+  uint8_t buttonMask;
+  int8_t dx;
+  int8_t dy;
+  int8_t dwheel;
+}  mouse_buffer;
+
+static uint16_t sinus = 7<<6;
+static uint16_t cosinus =0;
+static void advanceCircleByFixedAngle(void)
+{
+uint8_t    d;
+
+#define DIVIDE_BY_64(val)  (val + (val > 0 ? 32 : -32)) >> 6    /* rounding divide */
+    mouse_buffer.dx = d = DIVIDE_BY_64(cosinus);
+    sinus += d;
+    mouse_buffer.dy = d = DIVIDE_BY_64(sinus);
+    cosinus -= d;
+}
 
 static int hid_control_request(usbd_device *usbd_dev, struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
 			void (**complete)(usbd_device *usbd_dev, struct usb_setup_data *req))
 {
 	(void)complete;
 	(void)usbd_dev;
+
+    uint8_t wValueH =(uint8_t)(req->wValue >>8);
+    uint8_t wValueL = (uint8_t)(req->wValue & 0xff);
+    if((req->bmRequestType & USB_REQ_TYPE_TYPE) == USB_REQ_TYPE_CLASS){
+      switch(req->bRequest){
+        case USB_HID_GET_REPORT:
+            if(wValueL==0 && wValueH == USB_HID_REPORT_INPUT ){
+              advanceCircleByFixedAngle();
+              *buf = (uint8_t*)&mouse_buffer;
+              *len = sizeof(mouse_buffer);
+              return 1;
+            }else{
+              return 0;
+            }
+            break;
+        case USB_HID_SET_REPORT:
+            return 0;
+            break;
+        default: 
+              return 0;
+      }
+    }
 
 	if ((req->bmRequestType != 0x81) ||
 	   (req->bRequest != USB_REQ_GET_DESCRIPTOR) ||
@@ -200,11 +240,12 @@ static void hid_set_config(usbd_device *usbd_dev, uint16_t wValue)
 	systick_counter_enable();
 }
 
+static usbd_device *usbd_dev;
+
 int main(void)
 {
 	int i;
 
-	usbd_device *usbd_dev;
 
 	rcc_clock_setup_in_hse_8mhz_out_72mhz();
 
@@ -222,6 +263,9 @@ int main(void)
 	rcc_periph_clock_enable(RCC_GPIOB);
 	gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_2_MHZ,
 		      GPIO_CNF_OUTPUT_OPENDRAIN, GPIO9);
+    gpio_set(GPIOB, GPIO9);
+	for (i = 0; i < 0x80000; i++)
+		__asm__("nop");
 	gpio_clear(GPIOB, GPIO9);
 
 	usbd_dev = usbd_init(&stm32f103_usb_driver, &dev, &config, usb_strings, 3, usbd_control_buffer, sizeof(usbd_control_buffer));
@@ -236,3 +280,18 @@ int main(void)
 		usbd_poll(usbd_dev);
 }
 
+void sys_tick_handler(void)
+{
+	static int x = 0;
+	static int dir = 1;
+	uint8_t buf[4] = {0, 0, 0, 0};
+
+	buf[1] = dir;
+	x += dir;
+	if (x > 30)
+		dir = -dir;
+	if (x < -30)
+		dir = -dir;
+
+	usbd_ep_write_packet(usbd_dev, 0x81, buf, 4);
+}
