@@ -50,33 +50,16 @@ const struct usb_device_descriptor dev = {
 };
 
 static const uint8_t hid_report_descriptor[] = {
-	0x05, 0x01, /* USAGE_PAGE (Generic Desktop)         */
-	0x09, 0x02, /* USAGE (Mouse)                        */
-	0xa1, 0x01, /* COLLECTION (Application)             */
-	0x09, 0x01, /*   USAGE (Pointer)                    */
-	0xa1, 0x00, /*   COLLECTION (Physical)              */
-	0x05, 0x09, /*     USAGE_PAGE (Button)              */
-	0x19, 0x01, /*     USAGE_MINIMUM (Button 1)         */
-	0x29, 0x03, /*     USAGE_MAXIMUM (Button 3)         */
-	0x15, 0x00, /*     LOGICAL_MINIMUM (0)              */
-	0x25, 0x01, /*     LOGICAL_MAXIMUM (1)              */
-	0x95, 0x03, /*     REPORT_COUNT (3)                 */
-	0x75, 0x01, /*     REPORT_SIZE (1)                  */
-	0x81, 0x02, /*     INPUT (Data,Var,Abs)             */
-	0x95, 0x01, /*     REPORT_COUNT (1)                 */
-	0x75, 0x05, /*     REPORT_SIZE (5)                  */
-	0x81, 0x01, /*     INPUT (Cnst,Ary,Abs)             */
-	0x05, 0x01, /*     USAGE_PAGE (Generic Desktop)     */
-	0x09, 0x30, /*     USAGE (X)                        */
-	0x09, 0x31, /*     USAGE (Y)                        */
-	0x09, 0x38, /*     USAGE (Wheel)                    */
-	0x15, 0x81, /*     LOGICAL_MINIMUM (-127)           */
-	0x25, 0x7f, /*     LOGICAL_MAXIMUM (127)            */
-	0x75, 0x08, /*     REPORT_SIZE (8)                  */
-	0x95, 0x03, /*     REPORT_COUNT (3)                 */
-	0x81, 0x06, /*     INPUT (Data,Var,Rel)             */
-	0xc0,       /*   END_COLLECTION                     */
-	0xc0        /* END_COLLECTION                       */
+    0x06, 0x00, 0xff,              // USAGE_PAGE (Generic Desktop)
+    0x09, 0x01,                    // USAGE (Vendor Usage 1)
+    0xa1, 0x01,                    // COLLECTION (Application)
+    0x15, 0x00,                    //   LOGICAL_MINIMUM (0)
+    0x26, 0xff, 0x00,              //   LOGICAL_MAXIMUM (255)
+    0x75, 0x08,                    //   REPORT_SIZE (8)
+    0x95, 0x80,                    //   REPORT_COUNT (128)
+    0x09, 0x00,                    //   USAGE (Undefined)
+    0xb2, 0x02, 0x01,              //   FEATURE (Data,Var,Abs,Buf)
+    0xc0                           // END_COLLECTION
 };
 
 static const struct {
@@ -115,8 +98,8 @@ const struct usb_interface_descriptor hid_iface = {
 	.bAlternateSetting = 0,
 	.bNumEndpoints = 1,
 	.bInterfaceClass = USB_CLASS_HID,
-	.bInterfaceSubClass = 1, /* boot */
-	.bInterfaceProtocol = 2, /* mouse */
+	.bInterfaceSubClass = 0, /* not  boot */
+	.bInterfaceProtocol = 0, /* not mouse */
 	.iInterface = 0,
 
 	.endpoint = &hid_endpoint,
@@ -160,24 +143,35 @@ uint8_t usbd_control_buffer[128];
 #define USB_HID_REPORT_INPUT 0x01
 #define USB_HID_REPORT_OUTPUT 0x02 
 
-struct mouse_buffer_s {
-  uint8_t buttonMask;
-  int8_t dx;
-  int8_t dy;
-  int8_t dwheel;
-}  mouse_buffer;
+uint8_t report_buffer[128]= {'T','e','s','t',0};
+volatile uint8_t tried=0;
 
-static uint16_t sinus = 7<<6;
-static uint16_t cosinus =0;
-static void advanceCircleByFixedAngle(void)
+
+static int hid_class_request(usbd_device *usbd_dev, struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
+			void (**complete)(usbd_device *usbd_dev, struct usb_setup_data *req))
 {
-uint8_t    d;
+	(void)complete;
+	(void)usbd_dev;
 
-#define DIVIDE_BY_64(val)  (val + (val > 0 ? 32 : -32)) >> 6    /* rounding divide */
-    mouse_buffer.dx = d = DIVIDE_BY_64(cosinus);
-    sinus += d;
-    mouse_buffer.dy = d = DIVIDE_BY_64(sinus);
-    cosinus -= d;
+    gpio_toggle(GPIOA,GPIO9);
+    uint8_t wValueH =(uint8_t)(req->wValue >>8);
+    uint8_t wValueL = (uint8_t)(req->wValue & 0xff);
+      switch(req->bRequest){
+        case USB_HID_GET_REPORT:
+            if(wValueL==0 && (wValueH == USB_HID_REPORT_INPUT || wValueH == 0x03 )){
+              *buf = (uint8_t*)&report_buffer;
+              *len = sizeof(report_buffer);
+              return 1;
+            }else{
+              return 2;
+            }
+            break;
+        case USB_HID_SET_REPORT:
+            return 2;
+            break;
+        default: 
+              return 2;
+      }
 }
 
 static int hid_control_request(usbd_device *usbd_dev, struct usb_setup_data *req, uint8_t **buf, uint16_t *len,
@@ -186,27 +180,6 @@ static int hid_control_request(usbd_device *usbd_dev, struct usb_setup_data *req
 	(void)complete;
 	(void)usbd_dev;
 
-    uint8_t wValueH =(uint8_t)(req->wValue >>8);
-    uint8_t wValueL = (uint8_t)(req->wValue & 0xff);
-    if((req->bmRequestType & USB_REQ_TYPE_TYPE) == USB_REQ_TYPE_CLASS){
-      switch(req->bRequest){
-        case USB_HID_GET_REPORT:
-            if(wValueL==0 && wValueH == USB_HID_REPORT_INPUT ){
-              advanceCircleByFixedAngle();
-              *buf = (uint8_t*)&mouse_buffer;
-              *len = sizeof(mouse_buffer);
-              return 1;
-            }else{
-              return 0;
-            }
-            break;
-        case USB_HID_SET_REPORT:
-            return 0;
-            break;
-        default: 
-              return 0;
-      }
-    }
 
 	if ((req->bmRequestType != 0x81) ||
 	   (req->bRequest != USB_REQ_GET_DESCRIPTOR) ||
@@ -227,12 +200,15 @@ static void hid_set_config(usbd_device *usbd_dev, uint16_t wValue)
 
 	usbd_ep_setup(usbd_dev, 0x81, USB_ENDPOINT_ATTR_INTERRUPT, 4, NULL);
 
+    usbd_register_control_callback(usbd_dev, USB_REQ_TYPE_CLASS, USB_REQ_TYPE_TYPE,hid_class_request);
+
 	usbd_register_control_callback(
 				usbd_dev,
 				USB_REQ_TYPE_STANDARD | USB_REQ_TYPE_INTERFACE,
-				USB_REQ_TYPE_TYPE | USB_REQ_TYPE_RECIPIENT,
+				USB_REQ_TYPE_TYPE | USB_REQ_TYPE_RECIPIENT | USB_REQ_TYPE_DIRECTION,
 				hid_control_request);
 
+    gpio_toggle(GPIOB,GPIO1);
 	systick_set_clocksource(STK_CSR_CLKSOURCE_AHB_DIV8);
 	/* SysTick interrupt every N clock pulses: set reload to N-1 */
 	systick_set_reload(99999);
@@ -254,10 +230,12 @@ int main(void)
 
     /*External test led (not on the board*/
 	rcc_periph_clock_enable(RCC_GPIOA);
-	gpio_set(GPIOA, GPIO9);
 	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_2_MHZ,
 		      GPIO_CNF_OUTPUT_PUSHPULL, GPIO9);
     gpio_set(GPIOA,GPIO9);
+    gpio_set_mode(GPIOB,GPIO_MODE_OUTPUT_2_MHZ,
+                      GPIO_CNF_OUTPUT_PUSHPULL, GPIO1);
+    gpio_clear(GPIOB,GPIO1);
 
     /*Enable transistor switch to make usb autodetect work*/
 	rcc_periph_clock_enable(RCC_GPIOB);
@@ -274,24 +252,26 @@ int main(void)
 	for (i = 0; i < 0x80000; i++)
 		__asm__("nop");
 
-	gpio_clear(GPIOA, GPIO9);
+	//gpio_clear(GPIOA, GPIO9);
 
 	while (1)
 		usbd_poll(usbd_dev);
 }
 
+volatile uint32_t counter=0;
 void sys_tick_handler(void)
 {
-	static int x = 0;
-	static int dir = 1;
-	uint8_t buf[4] = {0, 0, 0, 0};
-
-	buf[1] = dir;
-	x += dir;
-	if (x > 30)
-		dir = -dir;
-	if (x < -30)
-		dir = -dir;
-
-	usbd_ep_write_packet(usbd_dev, 0x81, buf, 4);
+  /*
+  if(tried){
+    gpio_set(GPIOA,GPIO9);
+  }
+  else{
+    gpio_clear(GPIOA,GPIO9);
+  }
+  counter++;
+  if(counter>200){
+    counter=0;
+    gpio_toggle(GPIOA,GPIO9);
+  }
+  */
 }
