@@ -21,6 +21,8 @@
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
+#include <libopencm3/stm32/adc.h>
+#include <libopencm3/stm32/timer.h>
 #include <libopencm3/cm3/systick.h>
 #include <libopencm3/usb/usbd.h>
 #include <libopencm3/usb/hid.h>
@@ -143,7 +145,7 @@ uint8_t usbd_control_buffer[128];
 #define USB_HID_REPORT_INPUT 0x01
 #define USB_HID_REPORT_OUTPUT 0x02 
 
-uint8_t report_buffer[128]= {'T','e','s','t',0};
+volatile uint8_t report_buffer[128]= {0,10,'T','e','s','t',0};
 volatile uint8_t tried=0;
 
 
@@ -215,6 +217,62 @@ static void hid_set_config(usbd_device *usbd_dev, uint16_t wValue)
 	systick_interrupt_enable();
 	systick_counter_enable();
 }
+#define MY_ADC_CHANNEL ADC_CHANNEL0
+
+inline void adc_set_single_channel(uint32_t adc,uint8_t channel){
+  uint8_t channels[16];
+  channels[0]=channel;
+  adc_set_regular_sequence(adc,1,channels);
+}
+
+static void setup_timer(void)
+{
+	/* Set up the timer TIM2 for injected sampling */
+	uint32_t timer;
+
+	timer   = TIM3;
+	rcc_periph_clock_enable(RCC_TIM3);
+
+	/* Time Base configuration */
+    timer_reset(timer);
+    timer_set_mode(timer, TIM_CR1_CKD_CK_INT,
+	    TIM_CR1_CMS_EDGE, TIM_CR1_DIR_UP);
+    timer_set_period(timer, 0xFF);
+    timer_set_prescaler(timer, 0x8);
+    timer_set_clock_division(timer, 0x0);
+    /* Generate TRGO on every update. */
+    timer_set_master_mode(timer, TIM_CR2_MMS_UPDATE);
+    timer_enable_counter(timer);
+}
+
+static void setup_adc(void){
+    rcc_periph_clock_enable(RCC_ADC1);
+    adc_off(ADC1);
+
+
+    nvic_set_priority(NVIC_ADC1_2_IRQ, 0);
+    nvic_enable_irq(NVIC_ADC1_2_IRQ);
+
+    adc_disable_scan_mode(ADC1);
+    //adc_set_continuous_conversion_mode(ADC1);
+    adc_set_single_conversion_mode(ADC1);
+    adc_enable_external_trigger_regular(ADC1,ADC_CR2_EXTSEL_TIM3_TRGO);
+    adc_enable_eoc_interrupt(ADC1);
+    adc_set_right_aligned(ADC1);
+    adc_set_sample_time(ADC1, MY_ADC_CHANNEL, ADC_SMPR_SMP_55DOT5CYC);
+    adc_set_single_channel(ADC1,MY_ADC_CHANNEL);
+
+    adc_power_on(ADC1);
+	/* Wait for ADC starting up. */
+    int i;
+	for (i = 0; i < 800000; i++)    /* Wait a bit. */
+		__asm__("nop");
+//    adc_reset_calibration(ADC1);
+//    while ((ADC_CR2(ADC1) & ADC_CR2_RSTCAL) != 0);
+//    adc_calibration(ADC1);
+//    while ((ADC_CR2(ADC1) & ADC_CR2_CAL) != 0);
+//	adc_start_conversion_regular(ADC1);
+}
 
 static usbd_device *usbd_dev;
 
@@ -232,6 +290,8 @@ int main(void)
 	rcc_periph_clock_enable(RCC_GPIOA);
 	gpio_set_mode(GPIOA, GPIO_MODE_OUTPUT_2_MHZ,
 		      GPIO_CNF_OUTPUT_PUSHPULL, GPIO9);
+
+    gpio_set_mode(GPIOA,GPIO_MODE_INPUT,GPIO_CNF_INPUT_ANALOG,GPIO0);
     gpio_set(GPIOA,GPIO9);
     gpio_set_mode(GPIOB,GPIO_MODE_OUTPUT_2_MHZ,
                       GPIO_CNF_OUTPUT_PUSHPULL, GPIO1);
@@ -242,6 +302,14 @@ int main(void)
 	gpio_set_mode(GPIOB, GPIO_MODE_OUTPUT_2_MHZ,
 		      GPIO_CNF_OUTPUT_OPENDRAIN, GPIO9);
     gpio_set(GPIOB, GPIO9);
+
+    setup_timer();
+    setup_adc();
+    /*
+    uint16_t value = adc_read_regular(ADC1);
+    report_buffer[0]=value && 0xff;
+    report_buffer[1]=(value>>8) && 0xff;
+    */
 	for (i = 0; i < 0x80000; i++)
 		__asm__("nop");
 	gpio_clear(GPIOB, GPIO9);
@@ -256,6 +324,14 @@ int main(void)
 
 	while (1)
 		usbd_poll(usbd_dev);
+}
+
+void adc1_2_isr(void){
+  uint16_t value = adc_read_regular(ADC1);
+  report_buffer[2] = 5;
+  report_buffer[0]=value &0xff;
+  report_buffer[1]=(value>>8) &0xff; 
+  ADC_SR(ADC1) &= ~ADC_SR_EOC; // Clear EOC flag
 }
 
 volatile uint32_t counter=0;
