@@ -257,7 +257,7 @@ static void setup_adc(void){
     //adc_set_continuous_conversion_mode(ADC1);
     adc_set_single_conversion_mode(ADC1);
     adc_enable_external_trigger_regular(ADC1,ADC_CR2_EXTSEL_TIM3_TRGO);
-    adc_enable_eoc_interrupt(ADC1);
+ //   adc_enable_eoc_interrupt(ADC1);
     adc_set_right_aligned(ADC1);
     adc_set_sample_time(ADC1, MY_ADC_CHANNEL, ADC_SMPR_SMP_55DOT5CYC);
     adc_set_single_channel(ADC1,MY_ADC_CHANNEL);
@@ -267,10 +267,9 @@ static void setup_adc(void){
     int i;
 	for (i = 0; i < 800000; i++)    /* Wait a bit. */
 		__asm__("nop");
-//    adc_reset_calibration(ADC1);
-//    while ((ADC_CR2(ADC1) & ADC_CR2_RSTCAL) != 0);
-//    adc_calibration(ADC1);
-//    while ((ADC_CR2(ADC1) & ADC_CR2_CAL) != 0);
+    adc_reset_calibration(ADC1);
+    adc_calibration(ADC1);
+    adc_enable_eoc_interrupt(ADC1);
 //	adc_start_conversion_regular(ADC1);
 }
 
@@ -303,8 +302,8 @@ int main(void)
 		      GPIO_CNF_OUTPUT_OPENDRAIN, GPIO9);
     gpio_set(GPIOB, GPIO9);
 
-    setup_timer();
     setup_adc();
+    setup_timer();
     /*
     uint16_t value = adc_read_regular(ADC1);
     report_buffer[0]=value && 0xff;
