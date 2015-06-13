@@ -47,7 +47,7 @@ int             err;
         fprintf(stderr, "error finding %s: %s\n", productName, usbErrorMessage(err));
         return NULL;
     }
-    fprintf(stderr, "Device opened successfully!\n");
+    //fprintf(stderr, "Device opened successfully!\n");
     return dev;
 }
 
@@ -90,13 +90,12 @@ static void usage(char *myName)
 {
     fprintf(stderr, "usage:\n");
     fprintf(stderr, "  %s read\n", myName);
-    fprintf(stderr, "  %s write <listofbytes>\n", myName);
 }
 
 int main(int argc, char **argv)
 {
 usbDevice_t *dev;
-char        buffer[129];    /* room for dummy report ID */
+unsigned char        buffer[129];    /* room for dummy report ID */
 int         err;
 
     if(argc < 2){
@@ -110,16 +109,19 @@ int         err;
         if((err = usbhidGetReport(dev, 0, buffer, &len)) != 0){
             fprintf(stderr, "error reading data: %s\n", usbErrorMessage(err));
         }else{
-            hexdump(buffer + 1, sizeof(buffer) - 1);
+            unsigned int value;
+            double values[5];
+            int i;
+            for(i=1;i<=4;i++){
+             // printf("buffer%d=%02x\n",i,buffer[2*i+1]);
+              value=((buffer[2*i+2])<<8) +  (buffer[2*i+1]& 0xff);
+             // printf("value%d=%04x\n",i,value1);
+              values[i]=(double)value*3.1/4096.0;
+              printf("value%d=%4.2f\n",i,values[i]);
+            }
+            printf("value2-value1 = %4.2f\n",values[2]-values[1]);
+            //hexdump(buffer + 1, sizeof(buffer) - 1);
         }
-    }else if(strcasecmp(argv[1], "write") == 0){
-        int i, pos;
-        memset(buffer, 0, sizeof(buffer));
-        for(pos = 1, i = 2; i < argc && pos < sizeof(buffer); i++){
-            pos += hexread(buffer + pos, argv[i], sizeof(buffer) - pos);
-        }
-        if((err = usbhidSetReport(dev, buffer, sizeof(buffer))) != 0)   /* add a dummy report ID */
-            fprintf(stderr, "error writing data: %s\n", usbErrorMessage(err));
     }else{
         usage(argv[0]);
         exit(1);
